@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>GEEKs</title>
+
+  <!-- MediaPipe utilities & Pose solution (legacy JS API) -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+
+  <style>
+    body {
+      margin: 0;
+      background: #111;
+      color: #eee;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      min-height: 100vh;
+    }
+
+    header {
+      padding: 1rem;
+      text-align: center;
+    }
+
+    #container {
+      position: relative;
+      width: 640px;
+      height: 480px;
+      background: #000;
+    }
+
+    /* 入力の video は非表示にして、canvas にだけ描画 */
+    .input_video {
+      display: none;
+    }
+
+    .output_canvas {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 640px;
+      height: 480px;
+    }
+
+    #controls {
+      margin: 1rem 0;
+      display: flex;
+      gap: 1rem;
+      align-items: center;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    label {
+      cursor: pointer;
+    }
+
+    input[type="file"] {
+      cursor: pointer;
+    }
+
+    .status {
+      font-size: 0.9rem;
+      opacity: 0.8;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>MediaPipe Pose + Body Image Overlay</h1>
+    <p class="status">
+      カメラの許可を与えて、正方形の画像を読み込むと<br/>
+      両肩〜両腰の領域をその画像で置き換えます。
+    </p>
+  </header>
+
+  <div id="controls">
+    <label>
+      置き換え用画像（正方形推奨）:
+      <input type="file" id="imageInput" accept="image/*">
+    </label>
+    <span id="imageStatus" class="status">画像未読み込み</span>
+  </div>
+
+  <div id="container">
+    <video class="input_video" playsinline></video>
+    <canvas class="output_canvas" width="640" height="480"></canvas>
+  </div>
+
+  <script>
+    const videoElement = document.getElementsByClassName('input_video')[0];
+    const canvasElement = document.getElementsByClassName('output_canvas')[0];
+    const canvasCtx = canvasElement.getContext('2d');
+
+    const imageInput = document.getElementById('imageInput');
+    const imageStatus = document.getElementById('imageStatus');
+
+    let overlayImage = null;
+    let overlayImageLoaded = false;
+
+    // 画像読み込み
+    imageInput.addEventListener('change', (event) => {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const img = new Image();
+      img.onload = () => {
+        overlayImage = img;
+        overlayImageLoaded = true;
+        imageStatus.textContent = `画像読み込み完了 (${img.width}x${img.height})`;
+      };
+      img.onerror = () => {
+        overlayImage = null;
+        overlayImageLoaded = false;
+        imageStatus.textContent = '画像読み込み失敗';
+      };
+
+      // File を data URL として読み込み
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+
+    // MediaPipe Pose の結果コールバック
+    function onResults(results) {
+      canvasCtx.save();
+      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+      // カメラ画像を描画
+      canvasCtx.drawImage(
+        results.image,
+        0, 0,
+        canvasElement.width, canvasElement.height
+      );
+
+      // ランドマーク描画（デバッグ用）
+      if (results.poseLandmarks) {
+        drawConnectors(
+          canvasCtx,
+          results.poseLandmarks,
+          POSE_CONNECTIONS,
+          {color: '#00FF00', lineWidth: 2}
+        );
+        drawLandmarks(
+          canvasCtx,
+          results.poseLandmarks,
+          {color: '#FF0000', lineWidth: 1}
+        );
+      }
+
+      // 画像のオーバーレイ
+      if (results.poseLandmarks && overlayImageLoaded) {
+        drawBodyOverlay(results.poseLandmarks, canvasCtx, canvasElement);
+      }
+
+      canvasCtx.restore();
+    }
+
+    /**
+     * 両肩〜両腰の領域を画像で置き換える
+     * landmarks: Pose ランドマーク配列（正規化座標）
+     */
+    function drawBodyOverlay(landmarks, ctx, canvas) {
+      // MediaPipe Pose のインデックス:
+      // 11: LEFT_SHOULDER, 12: RIGHT_SHOULDER, 23: LEFT_HIP, 24: RIGHT_HIP
+      const indices = [11, 12, 23, 24];
+
+      const points = indices
+        .map(i => landmarks[i])
+        .filter(p => !!p);
+
+      if (points.length === 0) return;
+
+      // 正規化座標 (0〜1) → ピクセル
+      const xs = points.map(p => p.x * canvas.width);
+      const ys = points.map(p => p.y * canvas.height);
+
+      // 上端・下端
+      const topY = Math.min(...ys);
+      const bottomY = Math.max(...ys);
+      const height = bottomY - topY;
+      if (height <= 0) return;
+
+      // 中心座標（各頂点の平均）
+      const centerX = xs.reduce((a, b) => a + b, 0) / xs.length;
+      const centerY = ys.reduce((a, b) => a + b, 0) / ys.length;
+
+      // 画像のアスペクト比を維持したまま、高さを合わせる
+      const imgAspect = overlayImage.width / overlayImage.height;
+      const drawHeight = height;
+      const drawWidth = drawHeight * imgAspect;
+
+      const drawX = centerX - drawWidth / 2;
+      const drawY = centerY - drawHeight / 2;
+
+      // 胴体部分をマスクしたい場合は、先に矩形で塗りつぶすなどしてもOK
+      // ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+      // ctx.fillRect(drawX, drawY, drawWidth, drawHeight);
+
+      ctx.drawImage(overlayImage, drawX, drawY, drawWidth, drawHeight);
+    }
+
+    // Pose インスタンス作成
+    const pose = new Pose({
+      locateFile: (file) => {
+        return `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`;
+      }
+    });
+
+    pose.setOptions({
+      modelComplexity: 1,          // 精度重視
+      smoothLandmarks: true,
+      enableSegmentation: false,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
+    });
+
+    pose.onResults(onResults);
+
+    // カメラ起動
+    const camera = new Camera(videoElement, {
+      onFrame: async () => {
+        await pose.send({ image: videoElement });
+      },
+      width: 640,
+      height: 480
+    });
+
+    camera.start();
+  </script>
+</body>
+</html>
