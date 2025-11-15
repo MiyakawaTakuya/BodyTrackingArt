@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="utf-8" />
-  <title>Selfie Segmentation with Background Image</title>
+  <title>Selfie Segmentation with Image / Video Overlay</title>
 
   <!-- MediaPipe Scripts -->
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
@@ -38,50 +38,154 @@
       max-height: 100%;
     }
 
-    /* 画像選択ボタン */
+    /* コントロールパネル */
     #controlPanel {
       position: fixed;
       top: 16px;
       left: 16px;
       z-index: 10;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
     }
 
-    #bgInput {
+    /* ファイル入力は隠す */
+    #bgInput,
+    #videoInput {
       display: none;
     }
 
-    .btn-select-image {
-      display: inline-block;
-      padding: 8px 16px;
-      border-radius: 8px;
+    /* ファイル選択ボタン（画像／動画共通） */
+    .btn-select {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 8px 12px;
+      border-radius: 999px;
       border: none;
       background: rgba(128, 128, 128, 0.6); /* グレー半透明 */
-      color: #ffffff;                       /* 白文字 */
-      font-size: 14px;
+      color: #ffffff; /* 白文字 */
+      font-size: 13px;
       cursor: pointer;
       backdrop-filter: blur(4px);
       user-select: none;
+      text-decoration: none;
     }
 
-    .btn-select-image:active {
+    .btn-select svg {
+      width: 16px;
+      height: 16px;
+      fill: #ffffff;
+    }
+
+    .btn-select:active {
       transform: translateY(1px);
       opacity: 0.9;
     }
 
     .status {
-      margin-left: 8px;
-      font-size: 12px;
+      font-size: 11px;
       opacity: 0.85;
+      margin-left: 4px;
+      min-width: 180px;
+    }
+
+    /* モードトグル */
+    .mode-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      margin-left: 4px;
+      padding: 4px;
+      border-radius: 999px;
+      background: rgba(40, 40, 40, 0.7);
+      backdrop-filter: blur(4px);
+    }
+
+    .mode-btn {
+      width: 32px;
+      height: 32px;
+      border-radius: 999px;
+      border: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: transparent;
+      cursor: pointer;
+      padding: 0;
+    }
+
+    .mode-btn svg {
+      width: 18px;
+      height: 18px;
+      fill: #aaaaaa;
+    }
+
+    .mode-btn.active {
+      background: rgba(220, 220, 220, 0.2);
+    }
+
+    .mode-btn.active svg {
+      fill: #ffffff;
+    }
+
+    .mode-btn:active {
+      transform: translateY(1px);
     }
   </style>
 </head>
 
 <body>
-  <!-- 画像選択ボタン -->
+  <!-- コントロールエリア -->
   <div id="controlPanel">
-    <label for="bgInput" class="btn-select-image">背景画像を選択</label>
+    <!-- 画像ファイル選択 -->
+    <label for="bgInput" class="btn-select">
+      <!-- シンプルな写真アイコン（SVG） -->
+      <svg viewBox="0 0 24 24">
+        <rect x="3" y="5" width="18" height="14" rx="2" ry="2"></rect>
+        <circle cx="9" cy="11" r="2.2"></circle>
+        <path d="M14 11l3.5 4.5h-9L11 11l1.5 2z"></path>
+      </svg>
+      <span>Image</span>
+    </label>
     <input type="file" id="bgInput" accept="image/*" />
-    <span id="imageStatus" class="status">背景画像：未読み込み</span>
+
+    <!-- 動画ファイル選択 -->
+    <label for="videoInput" class="btn-select">
+      <!-- シンプルなフィルム／再生アイコン（SVG） -->
+      <svg viewBox="0 0 24 24">
+        <rect x="3" y="4" width="18" height="16" rx="2" ry="2"></rect>
+        <path d="M10 9.5v5l4.5-2.5L10 9.5z"></path>
+        <circle cx="6.5" cy="8" r="0.8"></circle>
+        <circle cx="6.5" cy="12" r="0.8"></circle>
+        <circle cx="6.5" cy="16" r="0.8"></circle>
+      </svg>
+      <span>Video</span>
+    </label>
+    <input type="file" id="videoInput" accept="video/*" />
+
+    <!-- モードトグル -->
+    <div class="mode-toggle" title="Overlay mode">
+      <button id="modeImageBtn" class="mode-btn">
+        <!-- アイコン：写真 -->
+        <svg viewBox="0 0 24 24">
+          <rect x="3" y="5" width="18" height="14" rx="2" ry="2"></rect>
+          <circle cx="9" cy="11" r="2.2"></circle>
+          <path d="M14 11l3.5 4.5h-9L11 11l1.5 2z"></path>
+        </svg>
+      </button>
+      <button id="modeVideoBtn" class="mode-btn">
+        <!-- アイコン：再生ボタン -->
+        <svg viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="9"></circle>
+          <path d="M10 9v6l4.5-3L10 9z" fill="#000000"></path>
+        </svg>
+      </button>
+    </div>
+
+    <span id="overlayStatus" class="status">Overlay: Image mode / ファイル未読み込み</span>
   </div>
 
   <div class="container">
@@ -98,44 +202,122 @@
     let selfieSegmentation;
     let camera;
 
-    // オーバーレイ用画像
+    // 画像用
     let overlayImage = null;
-    let overlayLoaded = false;
+    let overlayImageLoaded = false;
 
-    const imageStatus = document.getElementById('imageStatus');
+    // 動画用
+    const overlayVideo = document.createElement('video');
+    overlayVideo.style.display = 'none';
+    overlayVideo.muted = true;
+    overlayVideo.loop = true;
+    overlayVideo.playsInline = true;
+    overlayVideo.autoplay = true;
+    document.body.appendChild(overlayVideo);
+
+    let overlayVideoLoaded = false;
+
     const bgInput = document.getElementById('bgInput');
+    const videoInput = document.getElementById('videoInput');
+    const overlayStatus = document.getElementById('overlayStatus');
 
-    // 画像ソースを設定して読み込みを行うヘルパー
-    function setOverlayFromSrc(src) {
-      overlayLoaded = false;
+    const modeImageBtn = document.getElementById('modeImageBtn');
+    const modeVideoBtn = document.getElementById('modeVideoBtn');
+
+    // 'image' or 'video'
+    let currentMode = 'image';
+
+    function updateModeButtons() {
+      if (currentMode === 'image') {
+        modeImageBtn.classList.add('active');
+        modeVideoBtn.classList.remove('active');
+        if (overlayImageLoaded) {
+          overlayStatus.textContent = 'Overlay: Image mode / 画像読み込み済み';
+        } else {
+          overlayStatus.textContent = 'Overlay: Image mode / ファイル未読み込み';
+        }
+      } else {
+        modeImageBtn.classList.remove('active');
+        modeVideoBtn.classList.add('active');
+        if (overlayVideoLoaded) {
+          overlayStatus.textContent = 'Overlay: Video mode / 動画読み込み済み';
+        } else {
+          overlayStatus.textContent = 'Overlay: Video mode / ファイル未読み込み';
+        }
+      }
+    }
+
+    // モードボタンクリック
+    modeImageBtn.addEventListener('click', () => {
+      currentMode = 'image';
+      updateModeButtons();
+    });
+
+    modeVideoBtn.addEventListener('click', () => {
+      currentMode = 'video';
+      updateModeButtons();
+    });
+
+    // 画像読み込みヘルパー
+    function setOverlayImageFromSrc(src) {
+      overlayImageLoaded = false;
       const img = new Image();
       img.onload = () => {
         overlayImage = img;
-        overlayLoaded = true;
-        imageStatus.textContent = `背景画像：読み込み完了 (${img.width}x${img.height})`;
+        overlayImageLoaded = true;
+        // 画像を読み込んだタイミングでモードをImageに
+        currentMode = 'image';
+        updateModeButtons();
       };
       img.onerror = () => {
         overlayImage = null;
-        overlayLoaded = false;
-        imageStatus.textContent = '背景画像：読み込み失敗';
+        overlayImageLoaded = false;
         console.error('背景画像の読み込みに失敗しました');
+        updateModeButtons();
       };
       img.src = src;
     }
 
-    // ファイル選択から画像を読み込む
+    // 動画読み込みヘルパー
+    function setOverlayVideoFromSrc(src) {
+      overlayVideoLoaded = false;
+      overlayVideo.src = src;
+      overlayVideo.onloadedmetadata = () => {
+        overlayVideoLoaded = true;
+        overlayVideo.play().catch(err => console.warn('Video play error:', err));
+        // 動画を読み込んだタイミングでモードをVideoに
+        currentMode = 'video';
+        updateModeButtons();
+      };
+      overlayVideo.onerror = () => {
+        overlayVideoLoaded = false;
+        console.error('動画の読み込みに失敗しました');
+        updateModeButtons();
+      };
+    }
+
+    // 画像ファイル選択
     bgInput.addEventListener('change', (event) => {
       const file = event.target.files[0];
       if (!file) return;
 
       const reader = new FileReader();
       reader.onload = (e) => {
-        setOverlayFromSrc(e.target.result); // data URL で読み込む
+        setOverlayImageFromSrc(e.target.result); // data URL
       };
       reader.readAsDataURL(file);
     });
 
-    // Selfie Segmentation の結果コールバック
+    // 動画ファイル選択
+    videoInput.addEventListener('change', (event) => {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const url = URL.createObjectURL(file);
+      setOverlayVideoFromSrc(url);
+    });
+
+    // Selfie Segmentation 結果コールバック
     function onResults(results) {
       canvasCtx.save();
       canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
@@ -152,8 +334,8 @@
       // 人物部分のみ描画する
       canvasCtx.globalCompositeOperation = 'source-in';
 
-      if (overlayLoaded && overlayImage) {
-        // 背景として選択した画像を描画
+      if (currentMode === 'image' && overlayImageLoaded && overlayImage) {
+        // 画像モード
         canvasCtx.drawImage(
           overlayImage,
           0,
@@ -161,8 +343,17 @@
           canvasElement.width,
           canvasElement.height
         );
+      } else if (currentMode === 'video' && overlayVideoLoaded) {
+        // 動画モード（動画フレームをそのまま貼る）
+        canvasCtx.drawImage(
+          overlayVideo,
+          0,
+          0,
+          canvasElement.width,
+          canvasElement.height
+        );
       } else {
-        // 画像がまだない場合は、人物部分に単色を入れておく（赤人型を回避したい場合の処理）
+        // どちらも未読み込みのときのフォールバック
         canvasCtx.fillStyle = '#444';
         canvasCtx.fillRect(0, 0, canvasElement.width, canvasElement.height);
       }
@@ -185,11 +376,11 @@
       canvasElement = document.getElementById('output_canvas');
       canvasCtx = canvasElement.getContext('2d');
 
-      // 初期背景画像（任意、使わないならコメントアウトでOK）
-      // プロジェクト内に img/sky.png がある場合のみ利用してください
-      // setOverlayFromSrc('img/sky.png');
+      // 初期モードは Image
+      currentMode = 'image';
+      updateModeButtons();
 
-      // Selfie Segmentation の初期化
+      // Selfie Segmentation 初期化
       selfieSegmentation = new SelfieSegmentation({
         locateFile: (file) => {
           return `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`;
@@ -202,7 +393,7 @@
 
       selfieSegmentation.onResults(onResults);
 
-      // カメラの初期化
+      // カメラ初期化
       camera = new Camera(videoElement, {
         onFrame: async () => {
           await selfieSegmentation.send({ image: videoElement });
